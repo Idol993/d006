@@ -139,6 +139,8 @@ class DrillPlan:
     completed_at: Optional[datetime] = None
     status: DrillStatus = DrillStatus.PLANNED
     compliance_check_passed: bool = False
+    compliance_issues: list = field(default_factory=list)
+    channel_recovery_results: list = field(default_factory=list)
     recovery_result: str = ""
 
 

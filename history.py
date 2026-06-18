@@ -267,6 +267,18 @@ class HistoryManager:
         return filepath
 
     def _record_to_dict(self, record: PublishRecord) -> dict:
+        rollback = None
+        if record.rollback_report:
+            rollback = {
+                "rollback_id": record.rollback_report.rollback_id,
+                "trigger": record.rollback_report.trigger.value,
+                "restored_version": record.rollback_report.restored_version,
+                "channel_impact": record.rollback_report.channel_impact,
+                "violation_reasons": record.rollback_report.violation_reasons,
+                "complaint_stats": record.rollback_report.complaint_stats,
+                "rolled_back_at": record.rollback_report.rolled_back_at.isoformat(),
+                "notified_roles": record.rollback_report.notified_roles,
+            }
         return {
             "publish_id": record.publish_id,
             "script_version": {
@@ -283,4 +295,5 @@ class HistoryManager:
             "submitted_at": record.submitted_at.isoformat(),
             "published_at": record.published_at.isoformat() if record.published_at else None,
             "rolled_back_at": record.rolled_back_at.isoformat() if record.rolled_back_at else None,
+            "rollback_report": rollback,
         }

@@ -1,0 +1,30 @@
+{
+  "rollback_id": "RB-DAA032A0",
+  "publish_id": "PUB-9F0980FE",
+  "trigger": "auto",
+  "channel_impact": [],
+  "violation_reasons": [
+    "客户投诉率: 当前值0.0202, 阈值0.01"
+  ],
+  "complaint_stats": {
+    "total": 47,
+    "by_channel": {
+      "app": 20,
+      "phone": 6,
+      "wechat": 10,
+      "mini_program": 11
+    },
+    "by_type": {
+      "话术违规": 2,
+      "服务中断": 0
+    }
+  },
+  "rolled_back_at": "2026-06-19T07:28:10.713738",
+  "restored_version": "3.0.0",
+  "notified_roles": [
+    "运营",
+    "客服",
+    "合规",
+    "舆情监控"
+  ]
+}

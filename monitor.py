@@ -3,6 +3,7 @@ import random
 import threading
 from datetime import datetime
 from typing import Optional, Callable
+from collections import defaultdict
 from models import (
     MonitorSnapshot,
     MonitorMetricType,
@@ -19,11 +20,11 @@ class MonitorManager:
         self.metrics_cfg = monitor_cfg.get("metrics", {})
         self.consecutive_limit = monitor_cfg.get("consecutive_violations", 3)
         self.logger = logger
-        self._running = False
         self._thread: Optional[threading.Thread] = None
-        self._violation_counts = {m: 0 for m in self.metrics_cfg}
-        self._callbacks = []
-        self._stop_event = threading.Event()
+        self._violation_counts: dict = defaultdict(lambda: defaultdict(int))
+        self._callbacks: dict = defaultdict(list)
+        self._stop_events: dict = {}
+        self._locks: dict = defaultdict(threading.Lock)
 
     def start_monitoring(
         self,
@@ -31,32 +32,37 @@ class MonitorManager:
         on_threshold_exceeded: Optional[Callable] = None,
         simulate: bool = False,
     ):
-        self._running = True
-        self._stop_event.clear()
-        self._violation_counts = {m: 0 for m in self.metrics_cfg}
-        if on_threshold_exceeded:
-            self._callbacks.append(on_threshold_exceeded)
+        pid = record.publish_id
+        with self._locks[pid]:
+            self._violation_counts[pid] = defaultdict(int)
+            self._callbacks[pid] = []
+            if on_threshold_exceeded:
+                self._callbacks[pid].append(on_threshold_exceeded)
+            if pid in self._stop_events:
+                self._stop_events[pid].set()
+            stop_event = threading.Event()
+            self._stop_events[pid] = stop_event
 
         self.logger.log(
             "monitor_start",
             "system",
-            record.publish_id,
+            pid,
             f"启动服务监控，间隔{self.interval}秒",
         )
 
         def _monitor_loop():
-            while not self._stop_event.is_set():
+            while not stop_event.is_set():
                 for channel_key in ["app", "phone", "wechat", "mini_program"]:
                     snapshot = self._collect_metrics(
-                        record.publish_id, channel_key, simulate
+                        pid, channel_key, simulate
                     )
                     record.monitor_snapshots.append(snapshot)
-                    violations = self._check_thresholds(snapshot, channel_key)
+                    violations = self._check_thresholds(record, snapshot, channel_key)
                     if violations:
                         self.logger.log(
                             "monitor_threshold_violation",
                             "system",
-                            record.publish_id,
+                            pid,
                             f"渠道{channel_key}指标异常: {violations}",
                             {
                                 "channel": channel_key,
@@ -69,24 +75,37 @@ class MonitorManager:
                                 },
                             },
                         )
-                        for cb in self._callbacks:
-                            cb(record, channel_key, violations)
+                        with self._locks[pid]:
+                            callbacks = list(self._callbacks.get(pid, []))
+                        for cb in callbacks:
+                            try:
+                                cb(record, channel_key, violations)
+                            except Exception as e:
+                                self.logger.log(
+                                    "monitor_callback_error",
+                                    "system",
+                                    pid,
+                                    f"监控回调执行失败: {e}",
+                                    {"error": str(e)},
+                                )
+                            if record.status.value == "rolled_back":
+                                return
 
-                wait_interval = 1 if simulate else self.interval
-                self._stop_event.wait(wait_interval)
+                wait_interval = 0.5 if simulate else self.interval
+                stop_event.wait(wait_interval)
 
         self._thread = threading.Thread(target=_monitor_loop, daemon=True)
         self._thread.start()
 
     def stop_monitoring(self, publish_id: str = ""):
-        self._stop_event.set()
-        self._running = False
-        self.logger.log(
-            "monitor_stop",
-            "system",
-            publish_id,
-            "停止服务监控",
-        )
+        if publish_id and publish_id in self._stop_events:
+            self._stop_events[publish_id].set()
+            self.logger.log(
+                "monitor_stop",
+                "system",
+                publish_id,
+                "停止服务监控",
+            )
 
     def _collect_metrics(
         self, publish_id: str, channel: str, simulate: bool = False
@@ -111,7 +130,8 @@ class MonitorManager:
             channel=channel,
         )
 
-    def _check_thresholds(self, snapshot: MonitorSnapshot, channel: str) -> list:
+    def _check_thresholds(self, record: PublishRecord, snapshot: MonitorSnapshot, channel: str) -> list:
+        pid = record.publish_id
         violations = []
         for metric_key, metric_cfg in self.metrics_cfg.items():
             threshold = metric_cfg.get("threshold", 0)
@@ -126,21 +146,21 @@ class MonitorManager:
                 exceeded = True
 
             if exceeded:
-                self._violation_counts[metric_key] = (
-                    self._violation_counts.get(metric_key, 0) + 1
+                self._violation_counts[pid][metric_key] = (
+                    self._violation_counts[pid].get(metric_key, 0) + 1
                 )
-                if self._violation_counts[metric_key] >= self.consecutive_limit:
+                if self._violation_counts[pid][metric_key] >= self.consecutive_limit:
                     violations.append(
                         {
                             "metric": metric_key,
                             "value": value,
                             "threshold": threshold,
                             "description": metric_cfg.get("description", metric_key),
-                            "consecutive": self._violation_counts[metric_key],
+                            "consecutive": self._violation_counts[pid][metric_key],
                         }
                     )
             else:
-                self._violation_counts[metric_key] = 0
+                self._violation_counts[pid][metric_key] = 0
 
         return violations
 
@@ -156,9 +176,10 @@ class MonitorManager:
     def _fetch_service_interruption(self, channel: str) -> int:
         return 0
 
-    @property
-    def is_running(self) -> bool:
-        return self._running and not self._stop_event.is_set()
+    def is_running_for(self, publish_id: str) -> bool:
+        if publish_id not in self._stop_events:
+            return False
+        return not self._stop_events[publish_id].is_set()
 
     def get_latest_snapshot(self, record: PublishRecord, channel: str = "") -> Optional[MonitorSnapshot]:
         if not record.monitor_snapshots:

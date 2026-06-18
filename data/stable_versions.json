@@ -1,0 +1,34 @@
+[
+  {
+    "version": "2.1.0",
+    "channel": "app",
+    "business_type": "理财",
+    "status": "rolled_back",
+    "rolled_back_at": "2026-06-19T07:28:07.499102"
+  },
+  {
+    "version": "2.1.0",
+    "channel": "app",
+    "business_type": "理财",
+    "status": "stable",
+    "replaces_publish_id": "PUB-40DF6F99",
+    "set_by": "运营-张三",
+    "set_at": "2026-06-19T07:28:07.500075"
+  },
+  {
+    "version": "3.0.0",
+    "channel": "phone",
+    "business_type": "贷款",
+    "status": "rolled_back",
+    "rolled_back_at": "2026-06-19T07:28:10.714465"
+  },
+  {
+    "version": "3.0.0",
+    "channel": "phone",
+    "business_type": "贷款",
+    "status": "stable",
+    "replaces_publish_id": "PUB-9F0980FE",
+    "set_by": "合规-王五",
+    "set_at": "2026-06-19T07:28:10.716770"
+  }
+]

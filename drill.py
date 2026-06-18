@@ -56,13 +56,20 @@ class DrillManager:
         return drill
 
     def execute_drill(
-        self, drill: DrillPlan, operator: str = "system", simulate: bool = True
+        self,
+        drill: DrillPlan,
+        drill_content: Optional[str] = None,
+        business_type: str = "理财",
+        channel: str = "app",
+        operator: str = "system",
+        simulate: bool = True,
     ) -> DrillPlan:
         self.logger.log(
             "drill_start",
             operator,
             drill.drill_id,
             f"开始执行回滚演练: {drill.name}",
+            {"target_version": drill.target_version, "rollback_version": drill.rollback_version},
         )
 
         drill.status = DrillStatus.RUNNING
@@ -73,18 +80,28 @@ class DrillManager:
             operator,
             drill.drill_id,
             "演练合规校验",
+            {
+                "business_type": business_type,
+                "channel": channel,
+                "content_preview": (drill_content[:50] + "...") if drill_content and len(drill_content) > 50 else (drill_content or ""),
+            },
         )
 
         from models import ScriptVersion
 
         test_version = ScriptVersion(
             version=drill.target_version,
-            content="[演练测试话术内容]",
-            business_type="理财",
-            channel=drill.channels[0] if drill.channels else "app",
+            content=drill_content if drill_content else f"演练目标话术版本{drill.target_version}",
+            business_type=business_type,
+            channel=drill.channels[0] if drill.channels else channel,
         )
         check_result = self.pre_checker.check(test_version, operator)
         drill.compliance_check_passed = check_result.passed
+        drill.compliance_issues = (
+            check_result.compliance_issues
+            + check_result.regulatory_issues
+            + check_result.info_protection_issues
+        )
 
         if not drill.compliance_check_passed:
             self.logger.log(
@@ -92,10 +109,11 @@ class DrillManager:
                 operator,
                 drill.drill_id,
                 "演练合规校验未通过",
-                {"issues": check_result.compliance_issues + check_result.regulatory_issues},
+                {"issues": drill.compliance_issues[:10]},
             )
             drill.status = DrillStatus.FAILED
-            drill.recovery_result = "合规校验未通过，演练终止"
+            drill.recovery_result = f"合规校验未通过，演练终止。共{len(drill.compliance_issues)}项问题"
+            drill.channel_recovery_results = []
             drill.completed_at = datetime.now()
             self._save_drill(drill)
             return drill
@@ -112,10 +130,22 @@ class DrillManager:
             import time
             time.sleep(min(self.default_duration, 5))
 
-        recovery_ok = self._simulate_service_recovery(drill, operator)
-        drill.recovery_result = "服务恢复正常，话术已恢复至稳定版本" if recovery_ok else "服务恢复异常，需人工介入"
+        channel_results = self._simulate_service_recovery(drill, operator)
+        failed_channels = [c for c in channel_results if c.get("status") != "recovered"]
+        drill.channel_recovery_results = channel_results
 
-        drill.status = DrillStatus.COMPLETED if recovery_ok else DrillStatus.FAILED
+        if not failed_channels:
+            drill.recovery_result = (
+                f"所有{len(channel_results)}个渠道服务恢复正常，"
+                f"话术已恢复至稳定版本{drill.rollback_version}"
+            )
+            drill.status = DrillStatus.COMPLETED
+        else:
+            drill.recovery_result = (
+                f"部分渠道恢复异常，需人工介入。"
+                f"异常渠道: {', '.join(c['channel'] for c in failed_channels)}"
+            )
+            drill.status = DrillStatus.FAILED
         drill.completed_at = datetime.now()
 
         self._save_drill(drill)
@@ -128,6 +158,7 @@ class DrillManager:
             {
                 "compliance_passed": drill.compliance_check_passed,
                 "recovery_result": drill.recovery_result,
+                "channel_results": channel_results,
                 "duration": (
                     (drill.completed_at - drill.started_at).total_seconds()
                     if drill.started_at and drill.completed_at
@@ -137,23 +168,36 @@ class DrillManager:
         )
         return drill
 
-    def _simulate_service_recovery(self, drill: DrillPlan, operator: str) -> bool:
+    def _simulate_service_recovery(self, drill: DrillPlan, operator: str) -> list:
+        channel_names = {"app": "APP", "phone": "电话", "wechat": "微信", "mini_program": "小程序"}
         self.logger.log(
             "drill_recovery_check",
             operator,
             drill.drill_id,
-            "检查服务恢复状态",
-            {"channels": drill.channels},
+            "逐渠道模拟服务恢复",
+            {"channels": drill.channels, "rollback_version": drill.rollback_version},
         )
-        for channel in drill.channels:
+        results = []
+        for ch in drill.channels:
+            recovered_at = datetime.now().isoformat()
+            status = "recovered"
+            detail = f"话术版本切换至{drill.rollback_version}，健康检查通过，服务响应恢复正常"
             self.logger.log(
                 "drill_channel_recovery",
                 operator,
                 drill.drill_id,
-                f"渠道{channel}服务恢复检查",
-                {"channel": channel, "status": "recovered"},
+                f"渠道{channel_names.get(ch, ch)}恢复成功",
+                {"channel": ch, "status": status},
             )
-        return True
+            results.append({
+                "channel": ch,
+                "channel_name": channel_names.get(ch, ch),
+                "status": status,
+                "recovered_at": recovered_at,
+                "restored_version": drill.rollback_version,
+                "detail": detail,
+            })
+        return results
 
     def _save_drill(self, drill: DrillPlan):
         drill_dir = os.path.join(self.data_dir, "drills")
@@ -170,7 +214,9 @@ class DrillManager:
             "completed_at": drill.completed_at.isoformat() if drill.completed_at else None,
             "status": drill.status.value,
             "compliance_check_passed": drill.compliance_check_passed,
+            "compliance_issues": getattr(drill, "compliance_issues", []),
             "recovery_result": drill.recovery_result,
+            "channel_recovery_results": getattr(drill, "channel_recovery_results", []),
         }
         with open(drill_file, "w", encoding="utf-8") as f:
             json.dump(drill_data, f, ensure_ascii=False, indent=2)
