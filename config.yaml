@@ -1,0 +1,148 @@
+system:
+  name: 金融智能客服合规话术管理系统
+  version: "1.0.0"
+  data_dir: ./data
+  log_dir: ./logs
+  report_dir: ./reports
+  export_dir: ./exports
+
+pre_check:
+  compliance:
+    enabled: true
+    sensitive_keywords:
+      - 保证收益
+      - 零风险
+      - 稳赚不赔
+      - 保本保息
+      - 绝对安全
+    regulatory_rules:
+      - 银保监会消费者权益保护管理办法
+      - 个人信息保护法
+      - 金融消费者投诉处理管理办法
+      - 互联网信息服务管理办法
+  info_protection:
+    enabled: true
+    pii_patterns:
+      - "\\b\\d{17}[\\dXx]\\b"
+      - "\\b1[3-9]\\d{9}\\b"
+      - "\\b[\\w.-]+@[\\w.-]+\\.\\w+\\b"
+      - "\\b\\d{6,19}\\b"
+  service_availability:
+    check_timeout: 3
+    endpoints: {}
+
+approval:
+  risk_levels:
+    routine:
+      name: 常规话术更新
+      approvers:
+        - role: 运营主管
+          required: true
+        - role: 合规专员
+          required: true
+    emergency_compliance:
+      name: 紧急合规整改
+      approvers:
+        - role: 运营主管
+          required: true
+        - role: 合规专员
+          required: true
+        - role: 客服主管
+          required: true
+        - role: 法务专员
+          required: true
+    complaint_outbreak:
+      name: 客户投诉爆发
+      approvers:
+        - role: 运营主管
+          required: true
+        - role: 合规专员
+          required: true
+        - role: 客服主管
+          required: true
+        - role: 法务专员
+          required: true
+      escalation_timeout: 3600
+
+gray_release:
+  channels:
+    - app
+    - phone
+    - wechat
+    - mini_program
+  channel_names:
+    app: APP
+    phone: 电话
+    wechat: 微信
+    mini_program: 小程序
+  stages:
+    - ratio: 0.05
+      duration: 10
+    - ratio: 0.20
+      duration: 10
+    - ratio: 0.50
+      duration: 10
+    - ratio: 1.00
+      duration: 0
+
+monitor:
+  interval_seconds: 60
+  metrics:
+    response_rate:
+      threshold: 0.85
+      description: 客服响应率
+    violation_rate:
+      threshold: 0.02
+      description: 话术违规率
+      compare: above
+    complaint_rate:
+      threshold: 0.01
+      description: 客户投诉率
+      compare: above
+    service_interruption:
+      threshold: 0
+      description: 服务中断异常
+      compare: above
+  consecutive_violations: 3
+
+rollback:
+  auto_rollback: true
+  notify_roles:
+    - 运营
+    - 客服
+    - 合规
+    - 舆情监控
+  report_template:
+    include_channel_impact: true
+    include_violation_reason: true
+    include_complaint_stats: true
+
+drill:
+  default_duration: 3600
+  auto_recover: true
+
+report:
+  schedule: weekly
+  schedule_day: monday
+  metrics:
+    - publish_success_rate
+    - rollback_count
+    - customer_satisfaction
+  pdf_charts: true
+  excel_tables: true
+
+history:
+  query_fields:
+    - publish_time
+    - channel
+    - business_type
+    - version
+  export_formats:
+    - csv
+    - excel
+  batch_size: 1000
+
+logging:
+  level: INFO
+  retention_days: 90
+  audit_trail: true
