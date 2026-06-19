@@ -1,0 +1,69 @@
+{
+  "rollback_id": "RB-1B467257",
+  "publish_id": "PUB-6CFFB67E",
+  "trigger": "auto",
+  "channel_impact": [],
+  "violation_reasons": [
+    "话术违规率: 当前值0.0350, 阈值0.02",
+    "客户投诉率: 当前值0.0250, 阈值0.01",
+    "服务中断异常: 当前值1.0000, 阈值0"
+  ],
+  "complaint_stats": {
+    "total": 60,
+    "by_channel": {
+      "app": 15,
+      "phone": 20,
+      "wechat": 25
+    },
+    "by_type": {
+      "话术违规": 3,
+      "服务中断": 3
+    }
+  },
+  "rolled_back_at": "2026-06-19T08:15:28.924889",
+  "restored_version": "",
+  "notified_roles": [
+    "运营",
+    "客服",
+    "合规",
+    "舆情监控"
+  ],
+  "approval_status": "approved",
+  "approval_nodes": [],
+  "notification_tracking": [
+    {
+      "role": "运营",
+      "status": "notified",
+      "notified_at": "2026-06-19T08:15:28.924873",
+      "acked_at": null,
+      "acked_by": "",
+      "detail": "回滚告警已发送，版本1.0.0，需要人工处理"
+    },
+    {
+      "role": "客服",
+      "status": "notified",
+      "notified_at": "2026-06-19T08:15:28.924880",
+      "acked_at": null,
+      "acked_by": "",
+      "detail": "回滚告警已发送，版本1.0.0，需要人工处理"
+    },
+    {
+      "role": "合规",
+      "status": "notified",
+      "notified_at": "2026-06-19T08:15:28.924883",
+      "acked_at": null,
+      "acked_by": "",
+      "detail": "回滚告警已发送，版本1.0.0，需要人工处理"
+    },
+    {
+      "role": "舆情监控",
+      "status": "notified",
+      "notified_at": "2026-06-19T08:15:28.924886",
+      "acked_at": null,
+      "acked_by": "",
+      "detail": "回滚告警已发送，版本1.0.0，需要人工处理"
+    }
+  ],
+  "needs_manual": true,
+  "manual_reason": "无法找到渠道wechat/业务基金 的历史稳定版本（当前失败版本: 1.0.0），请人工介入处理"
+}
