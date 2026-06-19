@@ -1,5 +1,5 @@
 {
-  "drill_id": "DRILL-50B486FD",
+  "drill_id": "DRILL-4A8D1462",
   "name": "Q2合规话术回滚演练",
   "target_version": "3.0.0",
   "rollback_version": "2.1.0",
@@ -7,9 +7,9 @@
     "app",
     "wechat"
   ],
-  "planned_at": "2026-06-19T07:28:12.719368",
-  "started_at": "2026-06-19T07:28:12.720027",
-  "completed_at": "2026-06-19T07:28:12.720632",
+  "planned_at": "2026-06-19T08:04:48.142985",
+  "started_at": "2026-06-19T08:04:48.143569",
+  "completed_at": "2026-06-19T08:04:48.144158",
   "status": "completed",
   "compliance_check_passed": true,
   "compliance_issues": [],
@@ -19,7 +19,7 @@
       "channel": "app",
       "channel_name": "APP",
       "status": "recovered",
-      "recovered_at": "2026-06-19T07:28:12.720513",
+      "recovered_at": "2026-06-19T08:04:48.144061",
       "restored_version": "2.1.0",
       "detail": "话术版本切换至2.1.0，健康检查通过，服务响应恢复正常"
     },
@@ -27,7 +27,7 @@
       "channel": "wechat",
       "channel_name": "微信",
       "status": "recovered",
-      "recovered_at": "2026-06-19T07:28:12.720578",
+      "recovered_at": "2026-06-19T08:04:48.144107",
       "restored_version": "2.1.0",
       "detail": "话术版本切换至2.1.0，健康检查通过，服务响应恢复正常"
     }

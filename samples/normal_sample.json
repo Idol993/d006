@@ -1,0 +1,9 @@
+{
+  "description": "正常运营样本（所有渠道，不会触发回滚）",
+  "samples": [
+    {"channel": "all", "response_rate": 0.98, "violation_rate": 0.005, "complaint_rate": 0.003, "service_interruption": 0},
+    {"channel": "all", "response_rate": 0.97, "violation_rate": 0.008, "complaint_rate": 0.004, "service_interruption": 0},
+    {"channel": "all", "response_rate": 0.99, "violation_rate": 0.003, "complaint_rate": 0.002, "service_interruption": 0}
+  ],
+  "loop": true
+}

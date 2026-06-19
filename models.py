@@ -46,6 +46,13 @@ class RollbackTrigger(Enum):
     DRILL = "drill"
 
 
+class RollbackApprovalStatus(Enum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    MANUAL_REQUIRED = "manual_required"
+
+
 class DrillStatus(Enum):
     PLANNED = "planned"
     RUNNING = "running"
@@ -115,6 +122,27 @@ class MonitorSnapshot:
 
 
 @dataclass
+class RollbackApprovalNode:
+    role: str
+    required: bool
+    status: RollbackApprovalStatus = RollbackApprovalStatus.PENDING
+    approver: str = ""
+    comment: str = ""
+    approved_at: Optional[datetime] = None
+    notified_at: Optional[datetime] = None
+
+
+@dataclass
+class RollbackNotificationTrack:
+    role: str
+    status: str = "pending"
+    notified_at: Optional[datetime] = None
+    acked_at: Optional[datetime] = None
+    acked_by: str = ""
+    detail: str = ""
+
+
+@dataclass
 class RollbackReport:
     rollback_id: str
     publish_id: str
@@ -125,6 +153,11 @@ class RollbackReport:
     rolled_back_at: datetime = field(default_factory=datetime.now)
     restored_version: str = ""
     notified_roles: list = field(default_factory=list)
+    approval_status: RollbackApprovalStatus = RollbackApprovalStatus.APPROVED
+    approval_nodes: list = field(default_factory=list)
+    notification_tracking: list = field(default_factory=list)
+    needs_manual: bool = False
+    manual_reason: str = ""
 
 
 @dataclass

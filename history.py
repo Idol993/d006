@@ -147,14 +147,15 @@ class HistoryManager:
     ) -> list:
         filtered = []
         for r in records:
-            if publish_time_start:
-                ts = datetime.fromisoformat(r.get("submitted_at", ""))
-                if ts < publish_time_start:
-                    continue
-            if publish_time_end:
-                ts = datetime.fromisoformat(r.get("submitted_at", ""))
-                if ts > publish_time_end:
-                    continue
+            filter_ts_str = r.get("published_at") or r.get("submitted_at")
+            try:
+                filter_ts = datetime.fromisoformat(filter_ts_str) if filter_ts_str else None
+            except (ValueError, TypeError):
+                filter_ts = None
+            if publish_time_start and filter_ts and filter_ts < publish_time_start:
+                continue
+            if publish_time_end and filter_ts and filter_ts > publish_time_end:
+                continue
             if channel and r.get("script_version", {}).get("channel") != channel:
                 continue
             if business_type and r.get("script_version", {}).get("business_type") != business_type:
@@ -167,6 +168,8 @@ class HistoryManager:
                 continue
             if operator and r.get("operator") != operator:
                 continue
+            r["_filter_timestamp"] = filter_ts_str
+            r["_filter_basis"] = "published_at" if r.get("published_at") else "submitted_at"
             filtered.append(r)
         return filtered
 
@@ -182,12 +185,16 @@ class HistoryManager:
             "提交时间",
             "发布时间",
             "回滚时间",
+            "筛选基准",
+            "筛选基准时间",
         ]
+        basis_names = {"published_at": "发布时间", "submitted_at": "提交时间"}
         with open(filepath, "w", encoding="utf-8-sig", newline="") as f:
             writer = csv.writer(f)
             writer.writerow(headers)
             for r in records:
                 sv = r.get("script_version", {})
+                basis = r.get("_filter_basis", "submitted_at")
                 writer.writerow(
                     [
                         r.get("publish_id", ""),
@@ -200,6 +207,8 @@ class HistoryManager:
                         r.get("submitted_at", ""),
                         r.get("published_at", ""),
                         r.get("rolled_back_at", ""),
+                        basis_names.get(basis, basis),
+                        r.get("_filter_timestamp", ""),
                     ]
                 )
         return filepath
@@ -224,6 +233,7 @@ class HistoryManager:
             bottom=Side(style="thin"),
         )
 
+        basis_names = {"published_at": "发布时间", "submitted_at": "提交时间"}
         headers = [
             "发布ID",
             "话术版本",
@@ -235,6 +245,8 @@ class HistoryManager:
             "提交时间",
             "发布时间",
             "回滚时间",
+            "筛选基准",
+            "筛选基准时间",
         ]
         for col, h in enumerate(headers, 1):
             cell = ws.cell(row=1, column=col, value=h)
@@ -244,6 +256,7 @@ class HistoryManager:
 
         for row_idx, r in enumerate(records, 2):
             sv = r.get("script_version", {})
+            basis = r.get("_filter_basis", "submitted_at")
             row_data = [
                 r.get("publish_id", ""),
                 sv.get("version", ""),
@@ -255,6 +268,8 @@ class HistoryManager:
                 r.get("submitted_at", ""),
                 r.get("published_at", ""),
                 r.get("rolled_back_at", ""),
+                basis_names.get(basis, basis),
+                r.get("_filter_timestamp", ""),
             ]
             for col, val in enumerate(row_data, 1):
                 ws.cell(row=row_idx, column=col, value=val).border = thin_border
@@ -269,6 +284,18 @@ class HistoryManager:
     def _record_to_dict(self, record: PublishRecord) -> dict:
         rollback = None
         if record.rollback_report:
+            approval_nodes = []
+            for node in record.rollback_report.approval_nodes:
+                node_data = {
+                    "role": node.role,
+                    "required": node.required,
+                    "status": node.status.value if hasattr(node.status, "value") else str(node.status),
+                    "approver": node.approver,
+                    "comment": node.comment,
+                    "approved_at": node.approved_at.isoformat() if node.approved_at else None,
+                    "notified_at": node.notified_at.isoformat() if node.notified_at else None,
+                }
+                approval_nodes.append(node_data)
             rollback = {
                 "rollback_id": record.rollback_report.rollback_id,
                 "trigger": record.rollback_report.trigger.value,
@@ -278,6 +305,13 @@ class HistoryManager:
                 "complaint_stats": record.rollback_report.complaint_stats,
                 "rolled_back_at": record.rollback_report.rolled_back_at.isoformat(),
                 "notified_roles": record.rollback_report.notified_roles,
+                "approval_status": record.rollback_report.approval_status.value
+                    if hasattr(record.rollback_report.approval_status, "value")
+                    else str(record.rollback_report.approval_status),
+                "approval_nodes": approval_nodes,
+                "notification_tracking": record.rollback_report.notification_tracking,
+                "needs_manual": record.rollback_report.needs_manual,
+                "manual_reason": record.rollback_report.manual_reason,
             }
         return {
             "publish_id": record.publish_id,

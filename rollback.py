@@ -40,6 +40,34 @@ class RollbackManager:
 
         channel_impact = self._assess_channel_impact(record)
         complaint_stats = self._collect_complaint_stats(record)
+        restored_version = self._find_stable_version(record)
+
+        needs_manual = False
+        manual_reason = ""
+        if not restored_version:
+            needs_manual = True
+            manual_reason = (
+                f"无法找到渠道{record.script_version.channel}/业务{record.script_version.business_type} "
+                f"的历史稳定版本（当前失败版本: {record.script_version.version}），请人工介入处理"
+            )
+        elif restored_version == record.script_version.version:
+            needs_manual = True
+            manual_reason = (
+                f"可恢复版本{restored_version}与当前失败版本{record.script_version.version}相同，"
+                f"无法完成自动回滚，请人工介入处理"
+            )
+
+        notification_tracking = []
+        for role in self.notify_roles:
+            notification_tracking.append({
+                "role": role,
+                "status": "notified",
+                "notified_at": datetime.now().isoformat(),
+                "acked_at": None,
+                "acked_by": "",
+                "detail": f"回滚告警已发送，版本{record.script_version.version}，"
+                          + (f"将恢复至{restored_version}" if not needs_manual else "需要人工处理"),
+            })
 
         report = RollbackReport(
             rollback_id=rollback_id,
@@ -49,17 +77,39 @@ class RollbackManager:
             violation_reasons=violation_reasons or self._determine_violation_reasons(record),
             complaint_stats=complaint_stats,
             rolled_back_at=datetime.now(),
-            restored_version=self._find_stable_version(record),
+            restored_version=restored_version,
             notified_roles=self.notify_roles,
+            notification_tracking=notification_tracking,
+            needs_manual=needs_manual,
+            manual_reason=manual_reason,
         )
+
+        if needs_manual:
+            record.status = PublishStatus.ROLLED_BACK
+            record.rolled_back_at = datetime.now()
+            record.rollback_report = report
+            self._notify_stakeholders(report, operator)
+            self._save_report(report)
+            self.logger.log(
+                "rollback_manual_required",
+                operator,
+                record.publish_id,
+                manual_reason,
+                {"rollback_id": rollback_id, "manual_reason": manual_reason},
+            )
+            return report
 
         self._restore_previous_version(record, report.restored_version, operator)
         record.status = PublishStatus.ROLLED_BACK
         record.rolled_back_at = datetime.now()
         record.rollback_report = report
 
-        self._notify_stakeholders(report, operator)
+        for t in report.notification_tracking:
+            t["status"] = "recovered"
+            t["acked_at"] = datetime.now().isoformat()
+            t["acked_by"] = "system"
 
+        self._notify_stakeholders(report, operator)
         self._save_report(report)
 
         self.logger.log(
@@ -127,21 +177,21 @@ class RollbackManager:
 
     def _find_stable_version(self, record: PublishRecord) -> str:
         versions_file = os.path.join(self.data_dir, "stable_versions.json")
+        current_version = record.script_version.version
+        channel = record.script_version.channel
+        business_type = record.script_version.business_type
         if os.path.exists(versions_file):
             with open(versions_file, "r", encoding="utf-8") as f:
                 versions = json.load(f)
-            channel = record.script_version.channel
-            business_type = record.script_version.business_type
             for v in reversed(versions):
-                if v.get("channel") == channel and v.get("business_type") == business_type:
-                    if v.get("version") != record.script_version.version:
-                        return v["version"]
-        ver_parts = record.script_version.version.split(".")
-        if len(ver_parts) >= 3:
-            patch = int(ver_parts[-1])
-            ver_parts[-1] = str(max(0, patch - 1))
-            return ".".join(ver_parts)
-        return f"{record.script_version.version}-stable"
+                if (
+                    v.get("channel") == channel
+                    and v.get("business_type") == business_type
+                    and v.get("status") == "stable"
+                    and v.get("version") != current_version
+                ):
+                    return v["version"]
+        return ""
 
     def _restore_previous_version(
         self, record: PublishRecord, stable_version: str, operator: str
@@ -188,6 +238,18 @@ class RollbackManager:
         report_dir = os.path.join(self.data_dir, "rollback_reports")
         os.makedirs(report_dir, exist_ok=True)
         report_file = os.path.join(report_dir, f"{report.rollback_id}.json")
+        approval_nodes = []
+        for node in report.approval_nodes:
+            node_data = {
+                "role": node.role,
+                "required": node.required,
+                "status": node.status.value if hasattr(node.status, "value") else str(node.status),
+                "approver": node.approver,
+                "comment": node.comment,
+                "approved_at": node.approved_at.isoformat() if node.approved_at else None,
+                "notified_at": node.notified_at.isoformat() if node.notified_at else None,
+            }
+            approval_nodes.append(node_data)
         report_data = {
             "rollback_id": report.rollback_id,
             "publish_id": report.publish_id,
@@ -198,6 +260,11 @@ class RollbackManager:
             "rolled_back_at": report.rolled_back_at.isoformat(),
             "restored_version": report.restored_version,
             "notified_roles": report.notified_roles,
+            "approval_status": report.approval_status.value if hasattr(report.approval_status, "value") else str(report.approval_status),
+            "approval_nodes": approval_nodes,
+            "notification_tracking": report.notification_tracking,
+            "needs_manual": report.needs_manual,
+            "manual_reason": report.manual_reason,
         }
         with open(report_file, "w", encoding="utf-8") as f:
             json.dump(report_data, f, ensure_ascii=False, indent=2)

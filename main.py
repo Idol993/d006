@@ -18,6 +18,8 @@ from models import (
     Channel,
     RollbackTrigger,
     RollbackReport,
+    RollbackApprovalStatus,
+    RollbackApprovalNode,
     DrillPlan,
     DrillStatus,
 )
@@ -66,6 +68,7 @@ class ComplianceScriptManager:
         channel: str,
         risk_level: str,
         operator: str,
+        sample_file: Optional[str] = None,
     ) -> PublishRecord:
         script = ScriptVersion(
             version=version,
@@ -94,6 +97,7 @@ class ComplianceScriptManager:
                 "business_type": business_type,
                 "channel": channel,
                 "risk_level": risk_level,
+                "sample_file": sample_file,
             },
         )
 
@@ -129,7 +133,7 @@ class ComplianceScriptManager:
                 record.publish_id,
                 "审批流程全部通过，准备灰度发布",
             )
-            self._execute_publish(record, operator)
+            self._execute_publish(record, operator, sample_file=sample_file)
         else:
             record.status = PublishStatus.APPROVAL_REJECTED
             self.logger.log(
@@ -142,7 +146,12 @@ class ComplianceScriptManager:
         self.history_mgr.save_record(record)
         return record
 
-    def _execute_publish(self, record: PublishRecord, operator: str):
+    def _execute_publish(
+        self,
+        record: PublishRecord,
+        operator: str,
+        sample_file: Optional[str] = None,
+    ):
         rolled_back = {"flag": False}
 
         def on_threshold_exceeded(rec, channel_key, violations):
@@ -167,6 +176,7 @@ class ComplianceScriptManager:
             record,
             on_threshold_exceeded=on_threshold_exceeded,
             simulate=True,
+            sample_file=sample_file,
         )
 
         record = self.gray_release_mgr.execute_gray_release(
@@ -183,6 +193,51 @@ class ComplianceScriptManager:
                 "灰度完成，正式发布，持续监控中",
             )
 
+    def _run_rollback_approval(
+        self,
+        record: PublishRecord,
+        violations: list,
+        operator: str,
+    ) -> tuple[RollbackApprovalStatus, list]:
+        risk = record.risk_level
+        approval_nodes = []
+        if risk == RiskLevel.ROUTINE:
+            approval_nodes.append(RollbackApprovalNode(
+                role="运营",
+                required=True,
+                status=RollbackApprovalStatus.APPROVED,
+                approver="system",
+                comment="常规风险自动审批通过",
+                approved_at=datetime.now(),
+                notified_at=datetime.now(),
+            ))
+            return RollbackApprovalStatus.APPROVED, approval_nodes
+        elif risk == RiskLevel.EMERGENCY_COMPLIANCE:
+            for role in ["运营", "合规"]:
+                approval_nodes.append(RollbackApprovalNode(
+                    role=role,
+                    required=True,
+                    status=RollbackApprovalStatus.APPROVED,
+                    approver="system",
+                    comment=f"{role}自动审批通过（模拟）",
+                    approved_at=datetime.now(),
+                    notified_at=datetime.now(),
+                ))
+            return RollbackApprovalStatus.APPROVED, approval_nodes
+        elif risk == RiskLevel.COMPLAINT_OUTBREAK:
+            for role in ["运营", "合规", "客服主管", "法务"]:
+                approval_nodes.append(RollbackApprovalNode(
+                    role=role,
+                    required=True,
+                    status=RollbackApprovalStatus.APPROVED,
+                    approver="system",
+                    comment=f"{role}自动审批通过（模拟）",
+                    approved_at=datetime.now(),
+                    notified_at=datetime.now(),
+                ))
+            return RollbackApprovalStatus.APPROVED, approval_nodes
+        return RollbackApprovalStatus.PENDING, approval_nodes
+
     def _trigger_auto_rollback(self, record: PublishRecord, violations: list, operator: str):
         if record.status == PublishStatus.ROLLED_BACK:
             return
@@ -195,29 +250,72 @@ class ComplianceScriptManager:
         )
         self.monitor_mgr.stop_monitoring(record.publish_id)
 
+        approval_status, approval_nodes = self._run_rollback_approval(record, violations, operator)
+
         violation_reasons = [
             f"{v['description']}: 当前值{v['value']:.4f}, 阈值{v['threshold']}"
             for v in violations
         ]
+
+        if approval_status != RollbackApprovalStatus.APPROVED:
+            report = RollbackReport(
+                rollback_id=f"RB-{uuid.uuid4().hex[:8].upper()}",
+                publish_id=record.publish_id,
+                trigger=RollbackTrigger.AUTO,
+                violation_reasons=violation_reasons,
+                rolled_back_at=datetime.now(),
+                approval_status=approval_status,
+                approval_nodes=approval_nodes,
+                needs_manual=True,
+                manual_reason=f"回滚审批未通过（{approval_status.value}），请人工处理",
+            )
+            record.rollback_report = report
+            self.history_mgr.save_record(record)
+            self.logger.log(
+                "auto_rollback_rejected",
+                operator,
+                record.publish_id,
+                f"回滚审批未通过: {approval_status.value}",
+                {"approval_status": approval_status.value},
+            )
+            return
+
         report = self.rollback_mgr.execute_rollback(
             record,
             trigger=RollbackTrigger.AUTO,
             violation_reasons=violation_reasons,
             operator=operator,
         )
-        self._save_stable_version(record, report.restored_version, operator)
+
+        report.approval_status = approval_status
+        report.approval_nodes = approval_nodes
+
+        if not report.needs_manual:
+            self._save_stable_version(record, report.restored_version, operator)
+        else:
+            self.logger.log(
+                "auto_rollback_manual_required",
+                operator,
+                record.publish_id,
+                report.manual_reason,
+            )
 
         self.logger.log(
             "auto_rollback_complete",
             operator,
             record.publish_id,
-            f"自动回滚完成，恢复版本: {report.restored_version}",
+            f"自动回滚完成，恢复版本: {report.restored_version}，需人工处理: {report.needs_manual}",
             {
                 "restored_version": report.restored_version,
                 "channels_affected": [c["channel"] for c in report.channel_impact],
+                "needs_manual": report.needs_manual,
+                "manual_reason": report.manual_reason,
             },
         )
         self.history_mgr.save_record(record)
+
+        if report.needs_manual:
+            return
 
         stable_record = self._rehydrate_stable_record(record, report.restored_version)
         if stable_record:
@@ -257,13 +355,40 @@ class ComplianceScriptManager:
         )
 
         self.monitor_mgr.stop_monitoring(publish_id)
+
+        approval_status, approval_nodes = self._run_rollback_approval(
+            record,
+            [{"description": reason or "手动回滚", "value": 0, "threshold": 0}],
+            operator,
+        )
+
+        if approval_status != RollbackApprovalStatus.APPROVED:
+            report = RollbackReport(
+                rollback_id=f"RB-{uuid.uuid4().hex[:8].upper()}",
+                publish_id=record.publish_id,
+                trigger=RollbackTrigger.MANUAL,
+                violation_reasons=[reason] if reason else [],
+                rolled_back_at=datetime.now(),
+                approval_status=approval_status,
+                approval_nodes=approval_nodes,
+                needs_manual=True,
+                manual_reason=f"回滚审批未通过（{approval_status.value}），请人工处理",
+            )
+            record.rollback_report = report
+            self.history_mgr.save_record(record)
+            return report
+
         report = self.rollback_mgr.execute_rollback(
             record,
             trigger=RollbackTrigger.MANUAL,
             violation_reasons=[reason] if reason else [],
             operator=operator,
         )
-        self._save_stable_version(record, report.restored_version, operator)
+        report.approval_status = approval_status
+        report.approval_nodes = approval_nodes
+
+        if not report.needs_manual:
+            self._save_stable_version(record, report.restored_version, operator)
         self.history_mgr.save_record(record)
         return report
 
@@ -318,6 +443,14 @@ class ComplianceScriptManager:
         return sorted(latest.values(), key=lambda x: x.get("set_at", ""), reverse=True)
 
     def _save_stable_version(self, record: PublishRecord, restored_version: str, operator: str):
+        if restored_version == record.script_version.version:
+            self.logger.log(
+                "stable_version_skipped",
+                operator,
+                restored_version,
+                f"跳过保存稳定版本：恢复版本{restored_version}与当前失败版本相同",
+            )
+            return
         data_dir = self.config.get("system", {}).get("data_dir", "./data")
         stable_file = os.path.join(data_dir, "stable_versions.json")
         all_stable = []
@@ -341,6 +474,7 @@ class ComplianceScriptManager:
                 and s.get("business_type") == sv.business_type
                 and s.get("status") == "stable"
                 and s.get("set_at") < now_str
+                and s.get("version") != restored_version
             ):
                 s["status"] = "superseded"
         all_stable.append(new_entry)
@@ -588,6 +722,35 @@ def run_demo():
 
     mgr = ComplianceScriptManager("config.yaml")
     import time
+    import os
+    import json
+
+    # 预置初始稳定版本，让后续回滚有版本可恢复
+    data_dir = mgr.config.get("system", {}).get("data_dir", "./data")
+    stable_file = os.path.join(data_dir, "stable_versions.json")
+    initial_stable = [
+        {
+            "version": "2.0.0",
+            "channel": "app",
+            "business_type": "理财",
+            "status": "stable",
+            "set_by": "system_init",
+            "set_at": (datetime.now() - timedelta(days=7)).isoformat(),
+        },
+        {
+            "version": "2.0.0",
+            "channel": "phone",
+            "business_type": "贷款",
+            "status": "stable",
+            "set_by": "system_init",
+            "set_at": (datetime.now() - timedelta(days=7)).isoformat(),
+        },
+    ]
+    os.makedirs(data_dir, exist_ok=True)
+    with open(stable_file, "w", encoding="utf-8") as f:
+        json.dump(initial_stable, f, ensure_ascii=False, indent=2)
+    print("  [系统初始化] 已预置初始稳定版本: app/理财=2.0.0, phone/贷款=2.0.0")
+    print()
 
     print("\n【场景1】常规话术更新 - 完整发布流程（带监控回滚）")
     print("-" * 50)
@@ -762,10 +925,111 @@ def run_demo():
     for log in logs[:3]:
         print(f"    [{log['timestamp'][:19]}] {log['action']} | {log['operator']} | {log['detail'][:40]}")
 
+    print("\n【场景10】使用高风险样本文件发布 - 稳定触发回滚（可复现）")
+    print("-" * 50)
+    sample_path = "samples/rollback_trigger_sample.json"
+    sample_content = (
+        "尊敬的客户，感谢您选择我们的理财产品（样本测试版本）。"
+        "请注意投资有风险，入市需谨慎。风险提示：过往业绩不代表未来表现。"
+        "投资者适当性：本产品适合风险承受能力为中高风险的投资者。"
+    )
+    record10 = mgr.submit_publish_request(
+        version="2.3.0",
+        content=sample_content,
+        business_type="理财",
+        channel="app",
+        risk_level="routine",
+        operator="运营-测试1",
+        sample_file=sample_path,
+    )
+    time.sleep(2)
+    print(f"  发布ID: {record10.publish_id}")
+    print(f"  样本文件: {sample_path}")
+    print(f"  最终状态: {record10.status.value}")
+    if record10.rollback_report:
+        print(f"  【自动回滚】回滚报告ID: {record10.rollback_report.rollback_id}")
+        print(f"  【自动回滚】恢复版本: {record10.rollback_report.restored_version}")
+        print(f"  【自动回滚】需人工处理: {record10.rollback_report.needs_manual}")
+        if record10.rollback_report.needs_manual:
+            print(f"  【自动回滚】人工处理原因: {record10.rollback_report.manual_reason[:60]}...")
+        app_nodes = []
+        for n in record10.rollback_report.approval_nodes[:3]:
+            st = n.status.value if hasattr(n.status, "value") else str(n.status)
+            app_nodes.append(f"{n.role}:{st}")
+        if app_nodes:
+            print(f"  审批节点: {app_nodes}")
+        if record10.rollback_report.notification_tracking:
+            notif = [f"{t['role']}:{t['status']}" for t in record10.rollback_report.notification_tracking[:3]]
+            print(f"  通知追踪: {notif}")
+
+    print("\n【场景11】使用正常样本文件发布 - 不触发回滚（可复现）")
+    print("-" * 50)
+    sample_path2 = "samples/normal_sample.json"
+    record11 = mgr.submit_publish_request(
+        version="2.4.0",
+        content=sample_content,
+        business_type="理财",
+        channel="app",
+        risk_level="routine",
+        operator="运营-测试2",
+        sample_file=sample_path2,
+    )
+    time.sleep(4)
+    print(f"  发布ID: {record11.publish_id}")
+    print(f"  样本文件: {sample_path2}")
+    print(f"  最终状态: {record11.status.value}")
+    if record11.rollback_report:
+        print(f"  【自动回滚】回滚报告ID: {record11.rollback_report.rollback_id}")
+        print(f"  【自动回滚】恢复版本: {record11.rollback_report.restored_version}")
+    else:
+        print(f"  (样本指标均在阈值内，未触发回滚)")
+    mgr.monitor_mgr.stop_monitoring(record11.publish_id)
+
+    print("\n【场景12】无历史稳定版本 → 回滚触发人工处理")
+    print("-" * 50)
+    import os, json
+    data_dir = mgr.config.get("system", {}).get("data_dir", "./data")
+    stable_file = os.path.join(data_dir, "stable_versions.json")
+    if os.path.exists(stable_file):
+        with open(stable_file, "r", encoding="utf-8") as f:
+            all_stable = json.load(f)
+        filtered = [s for s in all_stable if not (s.get("channel") == "wechat" and s.get("business_type") == "基金")]
+        with open(stable_file, "w", encoding="utf-8") as f:
+            json.dump(filtered, f, ensure_ascii=False, indent=2)
+    sample_content12 = (
+        "尊敬的客户，您咨询的基金产品信息如下：产品名称：稳健成长基金，风险等级：R3中风险，"
+        "预期收益率：5%-8%，非保本浮动收益，过往业绩不代表未来表现。"
+        "根据《证券投资基金销售管理办法》《公开募集证券投资基金投资者适当性管理办法》"
+        "《证券期货投资者适当性管理办法》，我行已进行投资者适当性评估，"
+        "请您确认购买意愿。本产品不保证本金和收益，基金有风险，投资需谨慎。"
+        "提示：本产品由基金管理公司发行与管理，代销机构不承担产品的投资、兑付和风险管理责任。"
+    )
+    record12 = mgr.submit_publish_request(
+        version="1.0.0",
+        content=sample_content12,
+        business_type="基金",
+        channel="wechat",
+        risk_level="routine",
+        operator="运营-测试3",
+        sample_file="samples/rollback_trigger_sample.json",
+    )
+    time.sleep(2)
+    print(f"  发布ID: {record12.publish_id}")
+    print(f"  渠道/业务: wechat/基金（无历史稳定版本）")
+    print(f"  最终状态: {record12.status.value}")
+    if record12.rollback_report:
+        print(f"  【自动回滚】回滚报告ID: {record12.rollback_report.rollback_id}")
+        print(f"  【自动回滚】恢复版本: '{record12.rollback_report.restored_version}'")
+        print(f"  【自动回滚】需人工处理: {record12.rollback_report.needs_manual}")
+        if record12.rollback_report.needs_manual:
+            print(f"  【自动回滚】人工处理原因: {record12.rollback_report.manual_reason[:80]}")
+    mgr.monitor_mgr.stop_monitoring(record12.publish_id)
+
     print("\n" + "=" * 70)
     print("  演示完成！所有操作已记录到服务合规日志，全程留痕可查。")
     print("  CLI 用法速查:")
     print("    发布:       python main.py publish --version X --content Y ...")
+    print("    发布(带样本): python main.py publish --version X --content Y ... --sample-file samples/rollback_trigger_sample.json")
     print("    回滚:       python main.py rollback --publish-id PUB-XXXX --operator 张三")
     print("    演练:       python main.py drill --name 演练1 --target-version 3.0 --rollback-version 2.1 ...")
     print("    周报手动:   python main.py report")
@@ -790,6 +1054,7 @@ def run_cli():
     pub_parser.add_argument("--channel", required=True, choices=["app", "phone", "wechat", "mini_program"], help="服务渠道")
     pub_parser.add_argument("--risk-level", required=True, choices=["routine", "emergency_compliance", "complaint_outbreak"], help="风险级别")
     pub_parser.add_argument("--operator", required=True, help="操作人")
+    pub_parser.add_argument("--sample-file", default=None, help="监控样本文件路径 (JSON格式，包含samples/rollback_trigger_sample.json)")
 
     rollback_parser = subparsers.add_parser("rollback", help="手动回滚")
     rollback_parser.add_argument("--publish-id", required=True, help="发布ID")
@@ -861,6 +1126,7 @@ def run_cli():
             channel=args.channel,
             risk_level=args.risk_level,
             operator=args.operator,
+            sample_file=args.sample_file,
         )
         time.sleep(3)
         print(json.dumps({
@@ -869,9 +1135,13 @@ def run_cli():
             "pre_check_passed": record.pre_check_result.passed if record.pre_check_result else None,
             "rollback_report_id": record.rollback_report.rollback_id if record.rollback_report else None,
             "restored_version": record.rollback_report.restored_version if record.rollback_report else None,
+            "needs_manual": record.rollback_report.needs_manual if record.rollback_report else False,
+            "manual_reason": record.rollback_report.manual_reason if record.rollback_report else "",
         }, ensure_ascii=False, indent=2))
         if record.status == PublishStatus.ROLLED_BACK:
             print("  (发布监控异常，已自动回滚)")
+        elif record.rollback_report and record.rollback_report.needs_manual:
+            print("  (自动回滚无法找到可恢复版本，请人工处理)")
 
     elif args.command == "rollback":
         result = mgr.manual_rollback(args.publish_id, args.operator, args.reason)

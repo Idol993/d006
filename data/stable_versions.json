@@ -1,34 +1,66 @@
 [
   {
-    "version": "2.1.0",
+    "version": "2.0.0",
     "channel": "app",
     "business_type": "理财",
-    "status": "rolled_back",
-    "rolled_back_at": "2026-06-19T07:28:07.499102"
+    "status": "stable",
+    "set_by": "system_init",
+    "set_at": "2026-06-12T08:04:42.321005"
+  },
+  {
+    "version": "2.0.0",
+    "channel": "phone",
+    "business_type": "贷款",
+    "status": "stable",
+    "set_by": "system_init",
+    "set_at": "2026-06-12T08:04:42.321048"
   },
   {
     "version": "2.1.0",
     "channel": "app",
     "business_type": "理财",
+    "status": "rolled_back",
+    "rolled_back_at": "2026-06-19T08:04:42.840115"
+  },
+  {
+    "version": "2.0.0",
+    "channel": "app",
+    "business_type": "理财",
     "status": "stable",
-    "replaces_publish_id": "PUB-40DF6F99",
+    "replaces_publish_id": "PUB-DCB7AFF6",
     "set_by": "运营-张三",
-    "set_at": "2026-06-19T07:28:07.500075"
+    "set_at": "2026-06-19T08:04:42.841527"
   },
   {
     "version": "3.0.0",
     "channel": "phone",
     "business_type": "贷款",
     "status": "rolled_back",
-    "rolled_back_at": "2026-06-19T07:28:10.714465"
+    "rolled_back_at": "2026-06-19T08:04:46.138560"
   },
   {
-    "version": "3.0.0",
+    "version": "2.0.0",
     "channel": "phone",
     "business_type": "贷款",
     "status": "stable",
-    "replaces_publish_id": "PUB-9F0980FE",
+    "replaces_publish_id": "PUB-0829BC3E",
     "set_by": "合规-王五",
-    "set_at": "2026-06-19T07:28:10.716770"
+    "set_at": "2026-06-19T08:04:46.140107"
+  },
+  {
+    "version": "2.3.0",
+    "channel": "app",
+    "business_type": "理财",
+    "status": "rolled_back",
+    "rolled_back_at": "2026-06-19T08:04:49.019914"
+  },
+  {
+    "version": "2.0.0",
+    "channel": "app",
+    "business_type": "理财",
+    "status": "stable",
+    "replaces_publish_id": "PUB-06C63895",
+    "set_by": "运营-测试1",
+    "set_at": "2026-06-19T08:04:49.020659"
   }
 ]

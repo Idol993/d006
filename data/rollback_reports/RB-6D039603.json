@@ -1,0 +1,76 @@
+{
+  "rollback_id": "RB-6D039603",
+  "publish_id": "PUB-0829BC3E",
+  "trigger": "auto",
+  "channel_impact": [
+    {
+      "channel": "app",
+      "channel_name": "APP",
+      "gray_ratio": 0.05,
+      "started_at": "2026-06-19T08:04:45.936096",
+      "status": "受影响"
+    }
+  ],
+  "violation_reasons": [
+    "客户投诉率: 当前值0.0122, 阈值0.01"
+  ],
+  "complaint_stats": {
+    "total": 57,
+    "by_channel": {
+      "app": 12,
+      "phone": 17,
+      "wechat": 5,
+      "mini_program": 23
+    },
+    "by_type": {
+      "话术违规": 2,
+      "服务中断": 0
+    }
+  },
+  "rolled_back_at": "2026-06-19T08:04:46.138320",
+  "restored_version": "2.0.0",
+  "notified_roles": [
+    "运营",
+    "客服",
+    "合规",
+    "舆情监控"
+  ],
+  "approval_status": "approved",
+  "approval_nodes": [],
+  "notification_tracking": [
+    {
+      "role": "运营",
+      "status": "recovered",
+      "notified_at": "2026-06-19T08:04:46.138306",
+      "acked_at": "2026-06-19T08:04:46.138799",
+      "acked_by": "system",
+      "detail": "回滚告警已发送，版本3.0.0，将恢复至2.0.0"
+    },
+    {
+      "role": "客服",
+      "status": "recovered",
+      "notified_at": "2026-06-19T08:04:46.138312",
+      "acked_at": "2026-06-19T08:04:46.138803",
+      "acked_by": "system",
+      "detail": "回滚告警已发送，版本3.0.0，将恢复至2.0.0"
+    },
+    {
+      "role": "合规",
+      "status": "recovered",
+      "notified_at": "2026-06-19T08:04:46.138314",
+      "acked_at": "2026-06-19T08:04:46.138805",
+      "acked_by": "system",
+      "detail": "回滚告警已发送，版本3.0.0，将恢复至2.0.0"
+    },
+    {
+      "role": "舆情监控",
+      "status": "recovered",
+      "notified_at": "2026-06-19T08:04:46.138317",
+      "acked_at": "2026-06-19T08:04:46.138807",
+      "acked_by": "system",
+      "detail": "回滚告警已发送，版本3.0.0，将恢复至2.0.0"
+    }
+  ],
+  "needs_manual": false,
+  "manual_reason": ""
+}

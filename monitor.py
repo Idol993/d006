@@ -1,4 +1,6 @@
 import time
+import json
+import os
 import random
 import threading
 from datetime import datetime
@@ -25,12 +27,14 @@ class MonitorManager:
         self._callbacks: dict = defaultdict(list)
         self._stop_events: dict = {}
         self._locks: dict = defaultdict(threading.Lock)
+        self._sample_data: dict = {}
 
     def start_monitoring(
         self,
         record: PublishRecord,
         on_threshold_exceeded: Optional[Callable] = None,
         simulate: bool = False,
+        sample_file: Optional[str] = None,
     ):
         pid = record.publish_id
         with self._locks[pid]:
@@ -42,6 +46,21 @@ class MonitorManager:
                 self._stop_events[pid].set()
             stop_event = threading.Event()
             self._stop_events[pid] = stop_event
+
+        if sample_file and os.path.exists(sample_file):
+            with open(sample_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            self._sample_data[pid] = {
+                "samples": data.get("samples", []),
+                "index": 0,
+                "loop": data.get("loop", False),
+            }
+            self.logger.log(
+                "monitor_sample_loaded",
+                "system",
+                pid,
+                f"加载监控样本文件 {sample_file}，共 {len(data.get('samples', []))} 条",
+            )
 
         self.logger.log(
             "monitor_start",
@@ -100,6 +119,8 @@ class MonitorManager:
     def stop_monitoring(self, publish_id: str = ""):
         if publish_id and publish_id in self._stop_events:
             self._stop_events[publish_id].set()
+            if publish_id in self._sample_data:
+                del self._sample_data[publish_id]
             self.logger.log(
                 "monitor_stop",
                 "system",
@@ -110,6 +131,35 @@ class MonitorManager:
     def _collect_metrics(
         self, publish_id: str, channel: str, simulate: bool = False
     ) -> MonitorSnapshot:
+        if publish_id in self._sample_data:
+            sd = self._sample_data[publish_id]
+            if sd["samples"]:
+                n = len(sd["samples"])
+                if sd["loop"]:
+                    idx = sd["index"] % n
+                else:
+                    idx = min(sd["index"], n - 1)
+                sample = sd["samples"][idx]
+                if sample.get("channel") in (channel, "all", None):
+                    sd["index"] += 1
+                    return MonitorSnapshot(
+                        timestamp=datetime.now(),
+                        response_rate=sample.get("response_rate", 0.95),
+                        violation_rate=sample.get("violation_rate", 0.0),
+                        complaint_rate=sample.get("complaint_rate", 0.0),
+                        service_interruption=sample.get("service_interruption", 0),
+                        channel=channel,
+                    )
+                else:
+                    return MonitorSnapshot(
+                        timestamp=datetime.now(),
+                        response_rate=sample.get("response_rate", 0.95),
+                        violation_rate=sample.get("violation_rate", 0.0),
+                        complaint_rate=sample.get("complaint_rate", 0.0),
+                        service_interruption=sample.get("service_interruption", 0),
+                        channel=channel,
+                    )
+
         if simulate:
             response_rate = random.uniform(0.80, 0.99)
             violation_rate = random.uniform(0.0, 0.05)

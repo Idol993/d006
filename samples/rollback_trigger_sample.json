@@ -1,0 +1,9 @@
+{
+  "description": "高投诉率触发回滚样本（所有渠道，连续3次超阈值）",
+  "samples": [
+    {"channel": "all", "response_rate": 0.95, "violation_rate": 0.025, "complaint_rate": 0.015, "service_interruption": 1},
+    {"channel": "all", "response_rate": 0.90, "violation_rate": 0.030, "complaint_rate": 0.020, "service_interruption": 2},
+    {"channel": "all", "response_rate": 0.85, "violation_rate": 0.035, "complaint_rate": 0.025, "service_interruption": 1}
+  ],
+  "loop": false
+}
